@@ -275,6 +275,13 @@ async def api_status():
         })
     return {"servers": results}
 
+@app.post("/check/all")
+async def check_all():
+    """手动触发检查所有服务器"""
+    # 创建异步任务来执行检查，不阻塞响应
+    asyncio.create_task(scheduled_check())
+    return {"message": "已触发对所有服务器的检查"}
+
 @app.post("/check/{server_index}")
 async def check_server(server_index: int, background_tasks: BackgroundTasks):
     """手动触发检查特定服务器"""
@@ -284,13 +291,6 @@ async def check_server(server_index: int, background_tasks: BackgroundTasks):
     server_url = settings.servers[server_index]
     background_tasks.add_task(check_and_execute, server_url)
     return {"message": f"已触发对服务器 {server_url} 的检查"}
-
-@app.post("/check/all")
-async def check_all():
-    """手动触发检查所有服务器"""
-    # 创建异步任务来执行检查，不阻塞响应
-    asyncio.create_task(scheduled_check())
-    return {"message": "已触发对所有服务器的检查"}
 
 @app.post("/check/all/background")
 async def check_all_background(background_tasks: BackgroundTasks):
