@@ -286,10 +286,17 @@ async def check_server(server_index: int, background_tasks: BackgroundTasks):
     return {"message": f"已触发对服务器 {server_url} 的检查"}
 
 @app.post("/check/all")
-async def check_all(background_tasks: BackgroundTasks):
+async def check_all():
     """手动触发检查所有服务器"""
-    background_tasks.add_task(scheduled_check)
+    # 创建异步任务来执行检查，不阻塞响应
+    asyncio.create_task(scheduled_check())
     return {"message": "已触发对所有服务器的检查"}
+
+@app.post("/check/all/background")
+async def check_all_background(background_tasks: BackgroundTasks):
+    """使用后台任务检查所有服务器"""
+    background_tasks.add_task(scheduled_check)
+    return {"message": "已触发对所有服务器的后台检查"}
 
 if __name__ == "__main__":
     import uvicorn
