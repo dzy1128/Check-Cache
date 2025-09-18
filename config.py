@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     port: int = 8000
     
     # 服务器列表
-    servers: List[str] = ["http://27.148.182.148:8188"]
+    servers: List[str] = ["http://27.148.182.150:8188"]
     
     # 工作流文件路径
     workflow_path: str = "缓存模型.json"
