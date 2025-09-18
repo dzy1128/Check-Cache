@@ -1,4 +1,5 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse
 import httpx
 import json
 import time
@@ -109,9 +110,160 @@ async def root():
     """API根路径"""
     return {"message": "ComfyUI Cache Checker API"}
 
-@app.get("/status")
+@app.get("/status", response_class=HTMLResponse)
 async def status():
-    """获取所有服务器的状态（并行检查）"""
+    """获取所有服务器的状态（并行检查）并显示HTML界面"""
+    tasks = [check_cache_status(server) for server in settings.servers]
+    cache_statuses = await asyncio.gather(*tasks)
+    
+    results = []
+    for server, cache_loaded in zip(settings.servers, cache_statuses):
+        results.append({
+            "server": server,
+            "cache_loaded": cache_loaded
+        })
+    
+    # 生成HTML页面
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ComfyUI Cache Checker Status</title>
+        <meta charset="UTF-8">
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f5f5f5;
+            }}
+            .container {{
+                max-width: 800px;
+                margin: 0 auto;
+                background-color: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            h1 {{
+                color: #333;
+                text-align: center;
+            }}
+            .server-item {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 10px;
+                margin: 10px 0;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+            }}
+            .status {{
+                padding: 5px 10px;
+                border-radius: 4px;
+                color: white;
+                font-weight: bold;
+            }}
+            .status.loaded {{
+                background-color: #28a745;
+            }}
+            .status.not-loaded {{
+                background-color: #dc3545;
+            }}
+            .buttons {{
+                text-align: center;
+                margin: 20px 0;
+            }}
+            button {{
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                margin: 0 10px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+            }}
+            button:hover {{
+                background-color: #0056b3;
+            }}
+            .refresh-btn {{
+                background-color: #28a745;
+            }}
+            .refresh-btn:hover {{
+                background-color: #1e7e34;
+            }}
+            .info {{
+                text-align: center;
+                color: #666;
+                margin: 10px 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>ComfyUI Cache Checker Status</h1>
+            <div class="info">
+                检查间隔: {settings.check_interval_seconds}秒 | 服务器数量: {len(settings.servers)}
+            </div>
+            
+            <div class="buttons">
+                <button onclick="startCheck()">立即开始缓存检测</button>
+                <button class="refresh-btn" onclick="refreshStatus()">刷新状态</button>
+            </div>
+            
+            <div class="servers">
+    """
+    
+    for result in results:
+        status_class = "loaded" if result["cache_loaded"] else "not-loaded"
+        status_text = "缓存已加载" if result["cache_loaded"] else "缓存未加载"
+        html_content += f"""
+                <div class="server-item">
+                    <span>{result["server"]}</span>
+                    <span class="status {status_class}">{status_text}</span>
+                </div>
+        """
+    
+    html_content += """
+            </div>
+        </div>
+        
+        <script>
+            function startCheck() {
+                fetch('/check/all', {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert('缓存检测已启动！');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                })
+                .catch(error => {
+                    alert('启动检测失败: ' + error);
+                });
+            }
+            
+            function refreshStatus() {
+                window.location.reload();
+            }
+            
+            // 自动刷新页面（每30秒）
+            setInterval(() => {
+                window.location.reload();
+            }, 30000);
+        </script>
+    </body>
+    </html>
+    """
+    
+    return html_content
+
+@app.get("/api/status")
+async def api_status():
+    """获取所有服务器的状态（JSON格式）"""
     tasks = [check_cache_status(server) for server in settings.servers]
     cache_statuses = await asyncio.gather(*tasks)
     
