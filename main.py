@@ -87,17 +87,17 @@ async def check_and_execute(server_url: str):
     else:
         logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
 
-# 定时任务，检查所有服务器
+# 定时任务，检查所有服务器（并行）
 async def scheduled_check():
-    """定时检查所有服务器的缓存状态"""
-    for server in settings.servers:
-        await check_and_execute(server)
+    """定时检查所有服务器的缓存状态（并行执行）"""
+    tasks = [check_and_execute(server) for server in settings.servers]
+    await asyncio.gather(*tasks)
 
 @app.on_event("startup")
 async def startup_event():
     """应用启动时执行的事件"""
     # 添加定时任务，按照配置的间隔检查服务器
-    scheduler.add_job(scheduled_check, 'interval', minutes=settings.check_interval_minutes)
+    scheduler.add_job(scheduled_check, 'interval', seconds=settings.check_interval_seconds)
     scheduler.start()
     logger.info("缓存检查定时任务已启动")
     
@@ -111,10 +111,12 @@ async def root():
 
 @app.get("/status")
 async def status():
-    """获取所有服务器的状态"""
+    """获取所有服务器的状态（并行检查）"""
+    tasks = [check_cache_status(server) for server in settings.servers]
+    cache_statuses = await asyncio.gather(*tasks)
+    
     results = []
-    for server in settings.servers:
-        cache_loaded = await check_cache_status(server)
+    for server, cache_loaded in zip(settings.servers, cache_statuses):
         results.append({
             "server": server,
             "cache_loaded": cache_loaded
