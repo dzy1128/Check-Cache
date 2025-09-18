@@ -1,0 +1,93 @@
+{
+  "2": {
+    "inputs": {
+      "key": "pulid_eva_clip",
+      "tag": "",
+      "data": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CacheBackendData //Inspire",
+    "_meta": {
+      "title": "Cache Backend Data (Inspire)"
+    }
+  },
+  "3": {
+    "inputs": {},
+    "class_type": "PulidFluxEvaClipLoader",
+    "_meta": {
+      "title": "Load Eva Clip (PuLID Flux)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "key": "pulid_face_analysis",
+      "tag": "",
+      "data": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "CacheBackendData //Inspire",
+    "_meta": {
+      "title": "Cache Backend Data (Inspire)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "provider": "CPU"
+    },
+    "class_type": "PulidFluxInsightFaceLoader",
+    "_meta": {
+      "title": "Load InsightFace (PuLID Flux)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "key": "pulid_model",
+      "tag": "",
+      "data": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "CacheBackendData //Inspire",
+    "_meta": {
+      "title": "Cache Backend Data (Inspire)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "pulid_file": "pulid_flux_v0.9.1.safetensors"
+    },
+    "class_type": "PulidFluxModelLoader",
+    "_meta": {
+      "title": "Load PuLID Flux Model"
+    }
+  },
+  "17": {
+    "inputs": {
+      "model": "BEN2_Base.pth",
+      "device": "cuda"
+    },
+    "class_type": "LayerMask: LoadBenModel",
+    "_meta": {
+      "title": "LayerMask: Load Ben Model(Advance)"
+    }
+  },
+  "18": {
+    "inputs": {
+      "key": "ben2_base",
+      "tag": "",
+      "data": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "CacheBackendData //Inspire",
+    "_meta": {
+      "title": "Cache Backend Data (Inspire)"
+    }
+  }
+}
