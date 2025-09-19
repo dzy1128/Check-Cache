@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # 检查间隔（秒）
     check_interval_seconds: int = 30
     
+    # 工作流执行超时时间（秒）
+    workflow_timeout_seconds: int = 120
+    
     @property
     def servers(self) -> List[str]:
         """将服务器字符串转换为列表"""

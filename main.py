@@ -49,27 +49,123 @@ async def check_cache_status(server_url: str) -> bool:
         logger.error(f"检查缓存状态异常: {e}")
         return False
 
+# 获取队列状态
+async def get_queue_status(server_url: str, client: httpx.AsyncClient):
+    """获取当前队列状态"""
+    try:
+        url = f"{server_url}/api/queue"
+        response = await client.get(url)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        logger.error(f"获取队列状态异常: {e}")
+        return None
+
+# 获取执行历史
+async def get_execution_history(server_url: str, prompt_id: str, client: httpx.AsyncClient):
+    """获取特定prompt的执行历史"""
+    try:
+        url = f"{server_url}/api/history/{prompt_id}"
+        response = await client.get(url)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        logger.error(f"获取执行历史异常: {e}")
+        return None
+
+# 等待工作流执行完成
+async def wait_for_workflow_completion(server_url: str, prompt_id: str, timeout: int = None):
+    """等待工作流执行完成并返回执行结果"""
+    if timeout is None:
+        timeout = settings.workflow_timeout_seconds
+        
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            # 检查队列状态
+            queue_status = await get_queue_status(server_url, client)
+            if queue_status:
+                # 检查是否还在队列中
+                running_tasks = queue_status.get("queue_running", [])
+                pending_tasks = queue_status.get("queue_pending", [])
+                
+                # 检查我们的任务是否还在运行中或等待中
+                is_running = any(task[1]["prompt"][0] == prompt_id for task in running_tasks)
+                is_pending = any(task[1]["prompt"][0] == prompt_id for task in pending_tasks)
+                
+                if not is_running and not is_pending:
+                    # 任务已完成，获取执行历史
+                    history = await get_execution_history(server_url, prompt_id, client)
+                    if history and prompt_id in history:
+                        execution_info = history[prompt_id]
+                        status = execution_info.get("status", {})
+                        
+                        if status.get("status_str") == "success":
+                            logger.info(f"工作流执行成功: {server_url}, prompt_id: {prompt_id}")
+                            return True, "执行成功"
+                        else:
+                            error_messages = []
+                            # 获取详细错误信息
+                            for node_id, node_info in execution_info.get("outputs", {}).items():
+                                if "error" in node_info:
+                                    error_info = node_info["error"]
+                                    error_msg = f"节点 {node_id}: {error_info.get('message', '未知错误')}"
+                                    if "traceback" in error_info:
+                                        error_msg += f"\n详细信息: {error_info['traceback']}"
+                                    error_messages.append(error_msg)
+                            
+                            if not error_messages:
+                                error_messages.append(f"执行失败，状态: {status}")
+                            
+                            error_text = "\n".join(error_messages)
+                            logger.error(f"工作流执行失败: {server_url}, prompt_id: {prompt_id}\n{error_text}")
+                            return False, error_text
+            
+            # 等待一段时间后再检查
+            await asyncio.sleep(2)
+        
+        # 超时
+        logger.error(f"工作流执行超时: {server_url}, prompt_id: {prompt_id}")
+        return False, f"执行超时 ({timeout}秒)"
+
 # 执行工作流
 async def execute_workflow(server_url: str):
-    """执行缓存模型工作流"""
+    """执行缓存模型工作流并等待完成"""
     workflow_data = load_workflow()
     if not workflow_data:
         logger.error("无法执行工作流，工作流数据为空")
-        return False
+        return False, "工作流数据为空"
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{server_url}/api/queue"
             response = await client.post(url, json={"prompt": workflow_data})
+            
             if response.status_code == 200:
-                logger.info(f"成功提交工作流到服务器: {server_url}")
-                return True
+                result = response.json()
+                prompt_id = result.get("prompt_id")
+                
+                if not prompt_id:
+                    logger.error(f"提交工作流成功但未获取到prompt_id: {server_url}")
+                    return False, "未获取到prompt_id"
+                
+                logger.info(f"成功提交工作流到服务器: {server_url}, prompt_id: {prompt_id}")
+                
+                # 等待工作流执行完成
+                success, message = await wait_for_workflow_completion(server_url, prompt_id)
+                return success, message
             else:
-                logger.error(f"提交工作流失败: {response.status_code}, {response.text}")
-                return False
+                error_msg = f"提交工作流失败: {response.status_code}, {response.text}"
+                logger.error(error_msg)
+                return False, error_msg
+                
     except Exception as e:
-        logger.error(f"执行工作流异常: {e}")
-        return False
+        error_msg = f"执行工作流异常: {e}"
+        logger.error(error_msg)
+        return False, error_msg
 
 # 检查并执行工作流的主函数
 async def check_and_execute(server_url: str):
@@ -79,11 +175,11 @@ async def check_and_execute(server_url: str):
     
     if not cache_loaded:
         logger.info(f"服务器缓存未加载，开始执行缓存工作流: {server_url}")
-        success = await execute_workflow(server_url)
+        success, message = await execute_workflow(server_url)
         if success:
-            logger.info(f"成功执行缓存工作流: {server_url}")
+            logger.info(f"成功执行缓存工作流: {server_url} - {message}")
         else:
-            logger.error(f"执行缓存工作流失败: {server_url}")
+            logger.error(f"执行缓存工作流失败: {server_url} - {message}")
     else:
         logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
 
@@ -296,6 +392,41 @@ async def check_all_background(background_tasks: BackgroundTasks):
     """使用后台任务检查所有服务器"""
     background_tasks.add_task(scheduled_check)
     return {"message": "已触发对所有服务器的后台检查"}
+
+@app.post("/execute/{server_index}")
+async def execute_server_workflow(server_index: int):
+    """手动执行特定服务器的工作流并获取详细结果"""
+    if server_index < 0 or server_index >= len(settings.servers):
+        return {"error": "服务器索引无效"}
+    
+    server_url = settings.servers[server_index]
+    success, message = await execute_workflow(server_url)
+    
+    return {
+        "server": server_url,
+        "success": success,
+        "message": message,
+        "timestamp": time.time()
+    }
+
+@app.get("/api/detailed_status")
+async def detailed_status():
+    """获取所有服务器的详细状态，包括缓存状态"""
+    results = []
+    
+    for i, server in enumerate(settings.servers):
+        cache_loaded = await check_cache_status(server)
+        
+        result = {
+            "server_index": i,
+            "server": server,
+            "cache_loaded": cache_loaded,
+            "status": "缓存已加载" if cache_loaded else "缓存未加载",
+            "timestamp": time.time()
+        }
+        results.append(result)
+    
+    return {"servers": results, "total_servers": len(settings.servers)}
 
 if __name__ == "__main__":
     import uvicorn
