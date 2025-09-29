@@ -145,12 +145,21 @@ async def execute_workflow(server_url: str):
             response = await client.post(url, json={"prompt": workflow_data})
             
             if response.status_code == 200:
-                result = response.json()
-                prompt_id = result.get("prompt_id")
+                # 检查响应体是否为空
+                if not response.text.strip():
+                    logger.error(f"提交工作流成功但服务器返回空响应: {server_url}")
+                    return False, "服务器返回空响应，可能是工作流格式错误或服务器内部错误"
                 
-                if not prompt_id:
-                    logger.error(f"提交工作流成功但未获取到prompt_id: {server_url}")
-                    return False, "未获取到prompt_id"
+                try:
+                    result = response.json()
+                    prompt_id = result.get("prompt_id")
+                    
+                    if not prompt_id:
+                        logger.error(f"提交工作流成功但未获取到prompt_id: {server_url}, 响应内容: {response.text}")
+                        return False, f"未获取到prompt_id，响应内容: {response.text}"
+                except Exception as json_error:
+                    logger.error(f"解析响应JSON失败: {server_url}, 错误: {json_error}, 响应内容: {response.text}")
+                    return False, f"解析响应失败: {json_error}"
                 
                 logger.info(f"成功提交工作流到服务器: {server_url}, prompt_id: {prompt_id}")
                 
@@ -162,8 +171,16 @@ async def execute_workflow(server_url: str):
                 logger.error(error_msg)
                 return False, error_msg
                 
+    except httpx.TimeoutException:
+        error_msg = f"执行工作流超时: {server_url}"
+        logger.error(error_msg)
+        return False, error_msg
+    except httpx.ConnectError:
+        error_msg = f"无法连接到服务器: {server_url}"
+        logger.error(error_msg)
+        return False, error_msg
     except Exception as e:
-        error_msg = f"执行工作流异常: {e}"
+        error_msg = f"执行工作流异常: {server_url}, 错误: {e}"
         logger.error(error_msg)
         return False, error_msg
 
