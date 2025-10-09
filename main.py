@@ -34,20 +34,30 @@ def load_workflow():
         return None
 
 # 检查缓存状态
-async def check_cache_status(server_url: str) -> bool:
-    """检查服务器缓存状态，如果缓存已加载返回True，否则返回False"""
+async def check_cache_status(server_url: str) -> tuple[bool, bool]:
+    """
+    检查服务器缓存状态
+    返回: (缓存是否已加载, 服务器是否已自动执行工作流)
+    """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             url = f"{server_url}/inspire/cache/determine"
             response = await client.get(url)
             if response.status_code == 200:
-                return "缓存已加载" in response.text
+                response_text = response.text
+                cache_loaded = "缓存已加载" in response_text
+                auto_executing = "已经自动在后台执行缓存模型工作流" in response_text
+                
+                if auto_executing:
+                    logger.info(f"服务器已自动在后台执行缓存工作流: {server_url}")
+                
+                return cache_loaded, auto_executing
             else:
                 logger.error(f"检查缓存状态失败: {response.status_code}")
-                return False
+                return False, False
     except Exception as e:
         logger.error(f"检查缓存状态异常: {e}")
-        return False
+        return False, False
 
 # 获取队列状态
 async def get_queue_status(server_url: str, client: httpx.AsyncClient):
@@ -188,17 +198,27 @@ async def execute_workflow(server_url: str):
 async def check_and_execute(server_url: str):
     """检查缓存状态并在需要时执行工作流"""
     logger.info(f"检查服务器缓存状态: {server_url}")
-    cache_loaded = await check_cache_status(server_url)
+    cache_loaded, auto_executing = await check_cache_status(server_url)
     
-    if not cache_loaded:
+    if cache_loaded:
+        logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
+    elif auto_executing:
+        logger.info(f"服务器已自动在后台执行缓存工作流，无需手动提交: {server_url}")
+        # 等待一段时间让自动执行的工作流完成
+        await asyncio.sleep(5)
+        # 再次检查缓存状态
+        cache_loaded_after, _ = await check_cache_status(server_url)
+        if cache_loaded_after:
+            logger.info(f"服务器缓存工作流执行完成: {server_url}")
+        else:
+            logger.warning(f"服务器缓存工作流仍在执行中: {server_url}")
+    else:
         logger.info(f"服务器缓存未加载，开始执行缓存工作流: {server_url}")
         success, message = await execute_workflow(server_url)
         if success:
             logger.info(f"成功执行缓存工作流: {server_url} - {message}")
         else:
             logger.error(f"执行缓存工作流失败: {server_url} - {message}")
-    else:
-        logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
 
 # 定时任务，检查所有服务器（并行）
 async def scheduled_check():
@@ -229,10 +249,19 @@ async def status():
     cache_statuses = await asyncio.gather(*tasks)
     
     results = []
-    for server, cache_loaded in zip(settings.servers, cache_statuses):
+    for server, (cache_loaded, auto_executing) in zip(settings.servers, cache_statuses):
+        status_text = "缓存已加载"
+        if not cache_loaded:
+            if auto_executing:
+                status_text = "后台执行中"
+            else:
+                status_text = "缓存未加载"
+        
         results.append({
             "server": server,
-            "cache_loaded": cache_loaded
+            "cache_loaded": cache_loaded,
+            "auto_executing": auto_executing,
+            "status_text": status_text
         })
     
     # 生成HTML页面
@@ -329,11 +358,11 @@ async def status():
     
     for result in results:
         status_class = "loaded" if result["cache_loaded"] else "not-loaded"
-        status_text = "缓存已加载" if result["cache_loaded"] else "缓存未加载"
+        status_display = result["status_text"]
         html_content += f"""
                 <div class="server-item">
                     <span>{result["server"]}</span>
-                    <span class="status {status_class}">{status_text}</span>
+                    <span class="status {status_class}">{status_display}</span>
                 </div>
         """
     
@@ -380,10 +409,19 @@ async def api_status():
     cache_statuses = await asyncio.gather(*tasks)
     
     results = []
-    for server, cache_loaded in zip(settings.servers, cache_statuses):
+    for server, (cache_loaded, auto_executing) in zip(settings.servers, cache_statuses):
+        status_text = "缓存已加载"
+        if not cache_loaded:
+            if auto_executing:
+                status_text = "后台执行中"
+            else:
+                status_text = "缓存未加载"
+        
         results.append({
             "server": server,
-            "cache_loaded": cache_loaded
+            "cache_loaded": cache_loaded,
+            "auto_executing": auto_executing,
+            "status": status_text
         })
     return {"servers": results}
 
@@ -432,13 +470,21 @@ async def detailed_status():
     results = []
     
     for i, server in enumerate(settings.servers):
-        cache_loaded = await check_cache_status(server)
+        cache_loaded, auto_executing = await check_cache_status(server)
+        
+        status_text = "缓存已加载"
+        if not cache_loaded:
+            if auto_executing:
+                status_text = "后台执行中"
+            else:
+                status_text = "缓存未加载"
         
         result = {
             "server_index": i,
             "server": server,
             "cache_loaded": cache_loaded,
-            "status": "缓存已加载" if cache_loaded else "缓存未加载",
+            "auto_executing": auto_executing,
+            "status": status_text,
             "timestamp": time.time()
         }
         results.append(result)
