@@ -151,7 +151,7 @@ async def execute_workflow(server_url: str):
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            url = f"{server_url}/api/queue"
+            url = f"{server_url}/prompt"
             response = await client.post(url, json={"prompt": workflow_data})
             
             if response.status_code == 200:
