@@ -79,7 +79,13 @@ async def get_execution_history(server_url: str, prompt_id: str, client: httpx.A
         url = f"{server_url}/api/history/{prompt_id}"
         response = await client.get(url)
         if response.status_code == 200:
-            return response.json()
+            result = response.json()
+            # 确保返回的是字典类型
+            if isinstance(result, dict):
+                return result
+            else:
+                logger.error(f"历史记录返回类型错误: {type(result)}")
+                return None
         return None
     except Exception as e:
         logger.error(f"获取执行历史异常: {e}")
@@ -103,8 +109,23 @@ async def wait_for_workflow_completion(server_url: str, prompt_id: str, timeout:
                 pending_tasks = queue_status.get("queue_pending", [])
                 
                 # 检查我们的任务是否还在运行中或等待中
-                is_running = any(task[1]["prompt"][0] == prompt_id for task in running_tasks)
-                is_pending = any(task[1]["prompt"][0] == prompt_id for task in pending_tasks)
+                # 安全地检查任务ID
+                is_running = False
+                is_pending = False
+                
+                try:
+                    is_running = any(
+                        task[1]["prompt"][0] == prompt_id 
+                        for task in running_tasks 
+                        if isinstance(task, (list, tuple)) and len(task) > 1
+                    )
+                    is_pending = any(
+                        task[1]["prompt"][0] == prompt_id 
+                        for task in pending_tasks 
+                        if isinstance(task, (list, tuple)) and len(task) > 1
+                    )
+                except (KeyError, IndexError, TypeError) as e:
+                    logger.warning(f"检查队列状态时出现异常: {e}")
                 
                 if not is_running and not is_pending:
                     # 任务已完成，获取执行历史
@@ -203,15 +224,30 @@ async def check_and_execute(server_url: str):
     if cache_loaded:
         logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
     elif auto_executing:
-        logger.info(f"服务器已自动在后台执行缓存工作流，无需手动提交: {server_url}")
+        logger.info(f"服务器提示已在后台自动执行，等待完成...: {server_url}")
         # 等待一段时间让自动执行的工作流完成
-        await asyncio.sleep(5)
-        # 再次检查缓存状态
-        cache_loaded_after, _ = await check_cache_status(server_url)
-        if cache_loaded_after:
-            logger.info(f"服务器缓存工作流执行完成: {server_url}")
+        max_wait_time = 30  # 最多等待30秒
+        wait_interval = 5   # 每5秒检查一次
+        waited = 0
+        
+        while waited < max_wait_time:
+            await asyncio.sleep(wait_interval)
+            waited += wait_interval
+            cache_loaded_after, still_auto = await check_cache_status(server_url)
+            
+            if cache_loaded_after:
+                logger.info(f"服务器缓存已成功加载: {server_url}")
+                return
+            
+            logger.info(f"等待中...已等待{waited}秒: {server_url}")
+        
+        # 等待超时后，如果缓存仍未加载，手动执行工作流
+        logger.warning(f"等待超时，缓存仍未加载，开始手动执行工作流: {server_url}")
+        success, message = await execute_workflow(server_url)
+        if success:
+            logger.info(f"成功执行缓存工作流: {server_url} - {message}")
         else:
-            logger.warning(f"服务器缓存工作流仍在执行中: {server_url}")
+            logger.error(f"执行缓存工作流失败: {server_url} - {message}")
     else:
         logger.info(f"服务器缓存未加载，开始执行缓存工作流: {server_url}")
         success, message = await execute_workflow(server_url)
