@@ -24,6 +24,9 @@ logger = logging.getLogger("cache_checker")
 app = FastAPI(title="ComfyUI Cache Checker")
 scheduler = AsyncIOScheduler()
 
+# 全局变量：跟踪每个服务器的提交状态
+server_submission_status = {}  # {server_url: {"last_submission_time": timestamp, "is_submitting": bool}}
+
 # 加载工作流JSON
 def load_workflow():
     try:
@@ -165,14 +168,36 @@ async def wait_for_workflow_completion(server_url: str, prompt_id: str, timeout:
 # 执行工作流
 async def execute_workflow(server_url: str):
     """执行缓存模型工作流并等待完成"""
+    # 检查是否正在提交
+    if server_url in server_submission_status:
+        status = server_submission_status[server_url]
+        if status.get("is_submitting", False):
+            logger.info(f"服务器正在提交工作流，跳过重复提交: {server_url}")
+            return False, "正在提交中，跳过重复提交"
+        
+        # 检查上次提交时间，如果在30秒内，则跳过
+        last_submission = status.get("last_submission_time", 0)
+        current_time = time.time()
+        if current_time - last_submission < 30:
+            remaining_time = 30 - (current_time - last_submission)
+            logger.info(f"距离上次提交不足30秒，等待 {remaining_time:.1f} 秒后再提交: {server_url}")
+            return False, f"需要等待 {remaining_time:.1f} 秒后再提交"
+    
     workflow_data = load_workflow()
     if not workflow_data:
         logger.error("无法执行工作流，工作流数据为空")
         return False, "工作流数据为空"
     
+    # 设置提交状态
+    server_submission_status[server_url] = {
+        "is_submitting": True,
+        "last_submission_time": time.time()
+    }
+    
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{server_url}/prompt"
+            logger.info(f"开始提交工作流到服务器: {server_url}")
             response = await client.post(url, json={"prompt": workflow_data})
             
             if response.status_code == 200:
@@ -196,6 +221,11 @@ async def execute_workflow(server_url: str):
                 
                 # 等待工作流执行完成
                 success, message = await wait_for_workflow_completion(server_url, prompt_id)
+                
+                # 清除提交状态
+                if server_url in server_submission_status:
+                    server_submission_status[server_url]["is_submitting"] = False
+                
                 return success, message
             else:
                 error_msg = f"提交工作流失败: {response.status_code}, {response.text}"
@@ -214,6 +244,10 @@ async def execute_workflow(server_url: str):
         error_msg = f"执行工作流异常: {server_url}, 错误: {e}"
         logger.error(error_msg)
         return False, error_msg
+    finally:
+        # 确保在所有情况下都清除提交状态
+        if server_url in server_submission_status:
+            server_submission_status[server_url]["is_submitting"] = False
 
 # 检查并执行工作流的主函数
 async def check_and_execute(server_url: str):
@@ -225,29 +259,23 @@ async def check_and_execute(server_url: str):
         logger.info(f"服务器缓存已加载，无需执行工作流: {server_url}")
     elif auto_executing:
         logger.info(f"服务器提示已在后台自动执行，等待完成...: {server_url}")
-        # 等待一段时间让自动执行的工作流完成
-        max_wait_time = 30  # 最多等待30秒
-        wait_interval = 5   # 每5秒检查一次
-        waited = 0
+        # 等待30秒让自动执行的工作流完成
+        logger.info(f"等待30秒让后台工作流完成: {server_url}")
+        await asyncio.sleep(30)
         
-        while waited < max_wait_time:
-            await asyncio.sleep(wait_interval)
-            waited += wait_interval
-            cache_loaded_after, still_auto = await check_cache_status(server_url)
-            
-            if cache_loaded_after:
-                logger.info(f"服务器缓存已成功加载: {server_url}")
-                return
-            
-            logger.info(f"等待中...已等待{waited}秒: {server_url}")
+        # 30秒后重新检查缓存状态
+        cache_loaded_after, still_auto = await check_cache_status(server_url)
         
-        # 等待超时后，如果缓存仍未加载，手动执行工作流
-        logger.warning(f"等待超时，缓存仍未加载，开始手动执行工作流: {server_url}")
-        success, message = await execute_workflow(server_url)
-        if success:
-            logger.info(f"成功执行缓存工作流: {server_url} - {message}")
+        if cache_loaded_after:
+            logger.info(f"等待30秒后，服务器缓存已成功加载: {server_url}")
+            return
         else:
-            logger.error(f"执行缓存工作流失败: {server_url} - {message}")
+            logger.warning(f"等待30秒后，缓存仍未加载，尝试手动执行工作流: {server_url}")
+            success, message = await execute_workflow(server_url)
+            if success:
+                logger.info(f"成功执行缓存工作流: {server_url} - {message}")
+            else:
+                logger.error(f"执行缓存工作流失败: {server_url} - {message}")
     else:
         logger.info(f"服务器缓存未加载，开始执行缓存工作流: {server_url}")
         success, message = await execute_workflow(server_url)
@@ -515,17 +543,50 @@ async def detailed_status():
             else:
                 status_text = "缓存未加载"
         
+        # 获取提交状态
+        submission_status = server_submission_status.get(server, {})
+        is_submitting = submission_status.get("is_submitting", False)
+        last_submission_time = submission_status.get("last_submission_time", 0)
+        
         result = {
             "server_index": i,
             "server": server,
             "cache_loaded": cache_loaded,
             "auto_executing": auto_executing,
             "status": status_text,
+            "is_submitting": is_submitting,
+            "last_submission_time": last_submission_time,
             "timestamp": time.time()
         }
         results.append(result)
     
     return {"servers": results, "total_servers": len(settings.servers)}
+
+@app.get("/api/submission_status")
+async def get_submission_status():
+    """获取所有服务器的提交状态"""
+    current_time = time.time()
+    results = []
+    
+    for server in settings.servers:
+        submission_info = server_submission_status.get(server, {})
+        is_submitting = submission_info.get("is_submitting", False)
+        last_submission_time = submission_info.get("last_submission_time", 0)
+        
+        # 计算距离上次提交的时间
+        time_since_last_submission = current_time - last_submission_time if last_submission_time > 0 else None
+        can_submit = time_since_last_submission is None or time_since_last_submission >= 30
+        
+        results.append({
+            "server": server,
+            "is_submitting": is_submitting,
+            "last_submission_time": last_submission_time,
+            "time_since_last_submission": time_since_last_submission,
+            "can_submit": can_submit and not is_submitting,
+            "next_submission_allowed_in": max(0, 30 - time_since_last_submission) if time_since_last_submission is not None and time_since_last_submission < 30 else 0
+        })
+    
+    return {"submission_status": results, "current_time": current_time}
 
 if __name__ == "__main__":
     import uvicorn
