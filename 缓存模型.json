@@ -90,29 +90,6 @@
       "title": "Cache Backend Data (Inspire)"
     }
   },
-  "21": {
-    "inputs": {
-      "version": "Florence-2-Flux"
-    },
-    "class_type": "LayerMask: LoadFlorence2Model",
-    "_meta": {
-      "title": "LayerMask: Load Florence2 Model(Advance)"
-    }
-  },
-  "22": {
-    "inputs": {
-      "key": "florence-2-flux",
-      "tag": "",
-      "data": [
-        "21",
-        0
-      ]
-    },
-    "class_type": "CacheBackendData //Inspire",
-    "_meta": {
-      "title": "Cache Backend Data (Inspire)"
-    }
-  },
   "23": {
     "inputs": {
       "model_path": "models/sam3/sam3.pt",
