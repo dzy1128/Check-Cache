@@ -92,12 +92,14 @@
   },
   "23": {
     "inputs": {
+      "device": "auto",
+      "use_gpu_cache": "",
       "model_path": "models/sam3/sam3.pt",
       "hf_token": ""
     },
     "class_type": "LoadSAM3Model",
     "_meta": {
-      "title": "(down)Load SAM3 Model"
+      "title": "Load SAM3 Model"
     }
   },
   "24": {
